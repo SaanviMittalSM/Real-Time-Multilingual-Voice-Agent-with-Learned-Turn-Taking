@@ -1,0 +1,18 @@
+# Phase 1/2 baseline: audio -> VAD -> ASR -> local LLM -> TTS
+# Heavier deps (retrieval, MCP, serving, quantization runtimes) are added in later phases.
+
+torchaudio
+faster-whisper==1.0.3   # CTranslate2-backed Whisper, CPU-friendly, quantizable
+silero-vad==5.1.2
+sounddevice==0.4.7      # mic capture
+soundfile==0.12.1
+numpy
+scipy
+librosa==0.10.2         # spectrogram/MFCC/pitch feature exploration in Phase 1
+ollama==0.3.3           # client for local LLM served by the Ollama daemon
+python-dotenv==1.0.1
+
+# NOTE: TTS uses the standalone Piper binary (not the piper-tts pip package —
+# its piper-phonemize dependency has no prebuilt wheel for Python 3.12 on Windows).
+# The binary is downloaded once into D:/ml-cache/voice-agent/piper_voices and
+# invoked as a subprocess from inference/tts.py.

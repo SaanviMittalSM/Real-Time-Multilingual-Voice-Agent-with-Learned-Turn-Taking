@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Env / secrets
+.env
+*.env.local
+
+# Data (junctioned to D: drive, never tracked)
+data/raw/*
+data/processed/*
+data/manifests/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/manifests/.gitkeep
+
+# Model weights / checkpoints (large binaries — track code, not weights)
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.bin
+*.safetensors
+*.gguf
+models/**/*.pt
+models/**/*.onnx
+models/**/checkpoints/
+
+# Caches
+.pytest_cache/
+.ipynb_checkpoints/
+hf_cache/
+ollama_models/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / experiment outputs
+*.log
+runs/
+wandb/
+outputs/
