@@ -154,10 +154,11 @@ def words_to_utterances(words, backchannel_ids):
     return result
 
 
-def build_meeting_labels(meeting_id, annotations_root: Path):
+def build_meeting_labels(meeting_id, annotations_root: Path, channel_map):
     words_dir = annotations_root / "words"
     da_dir = annotations_root / "dialogueActs"
     da_types = parse_da_types(annotations_root / "ontologies" / "da-types.xml")
+    speaker_channels = channel_map.get(meeting_id, {})
 
     speaker_files = sorted(words_dir.glob(f"{meeting_id}.*.words.xml"))
     if not speaker_files:
@@ -186,6 +187,7 @@ def build_meeting_labels(meeting_id, annotations_root: Path):
             labeled.append({
                 "meeting_id": meeting_id,
                 "speaker": u["speaker"],
+                "headset_channel": speaker_channels.get(u["speaker"]),
                 "text": u["text"],
                 "utterance_start": u["start"],
                 "utterance_end": u["end"],
@@ -216,6 +218,7 @@ def build_meeting_labels(meeting_id, annotations_root: Path):
         labeled.append({
             "meeting_id": meeting_id,
             "speaker": u["speaker"],
+            "headset_channel": speaker_channels.get(u["speaker"]),
             "text": u["text"],
             "utterance_start": u["start"],
             "utterance_end": u["end"],
@@ -235,9 +238,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     from download_ami import SPLITS, meeting_ids_for  # noqa: E402
+    from ami_utils import speaker_channel_map  # noqa: E402
 
     annotations_root = config.DATA_DIR / "raw" / "ami_annotations" / "extracted"
     audio_root = config.DATA_DIR / "raw" / "ami_audio" / args.split
+    channel_map = speaker_channel_map(annotations_root)
 
     candidate_meetings = meeting_ids_for(SPLITS[args.split])
     available_meetings = [m.name for m in audio_root.iterdir()] if audio_root.exists() else []
@@ -247,7 +252,7 @@ if __name__ == "__main__":
     for meeting_id in candidate_meetings:
         if meeting_id not in available_meetings:
             continue
-        labels = build_meeting_labels(meeting_id, annotations_root)
+        labels = build_meeting_labels(meeting_id, annotations_root, channel_map)
         if labels is None:
             skipped_no_da.append(meeting_id)
             continue
