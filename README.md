@@ -49,8 +49,21 @@ Latency and evaluation instrumentation runs alongside every stage (`turn_detecti
 ## Datasets
 
 Evaluated **separately per language** — English, Hindi, and Hinglish/code-switched are
-never averaged into a single "multilingual" number. Dataset selection and licensing
-notes will be documented here once Phase 3/4 data work begins.
+never averaged into a single "multilingual" number.
+
+**Turn-taking (English): AMI Meeting Corpus**, official "scenario-only" train/dev/test
+split, CC BY 4.0. Switchboard/Fisher/CALLHOME (the other commonly-cited turn-taking
+corpora) require paid LDC licenses and weren't used; Common Voice/FLEURS are
+single-speaker read speech with no turn-taking behavior to learn from, so they're not
+usable for this part despite being on the original candidate list.
+
+AMI has no dedicated "turn" annotation layer — turn/hold/backchannel labels are derived
+from per-speaker forced-aligned word timestamps plus AMI's dialogue-act annotations
+(which do directly tag backchannels). See `training/build_turn_labels.py` for the exact
+label-construction logic and its docstring for the methodology this follows.
+
+Hindi/Hinglish turn-taking data is an open gap — no equivalent public corpus is known
+yet; Phase 4 will need to either find one or construct a small eval set manually.
 
 ## Model Choices
 
@@ -78,6 +91,30 @@ any learned model, so the learned turn detector has something concrete to beat.
 baseline-vs-treatment comparison with real numbers, not before/after prose claims:
 
 1. Fixed VAD thresholds vs. learned turn detector
+
+   **Preliminary result (fixed-VAD side only, AMI dev set, n=7889 utterances,
+   learned-model comparison still pending):**
+
+   | threshold | precision | recall | F1 | false interruption rate | missed turn rate |
+   |---|---|---|---|---|---|
+   | 300ms | 0.548 | 0.807 | 0.653 | 0.964 | 0.193 |
+   | 500ms | 0.521 | 0.692 | 0.594 | 0.923 | 0.308 |
+   | 700ms | 0.501 | 0.610 | 0.550 | 0.881 | 0.390 |
+   | 900ms | 0.480 | 0.531 | 0.504 | 0.836 | 0.469 |
+
+   Reproduce: `python training/download_ami.py dev && python training/build_turn_labels.py dev && python evaluation/turn_eval.py dev`
+
+   False-interruption rate here means: of all utterances where the same
+   speaker was just pausing (not actually done), what fraction had a pause
+   long enough that a fixed threshold would wrongly think they were done.
+   84-96% is strikingly high — same-speaker thinking pauses in real meeting
+   speech routinely exceed even 900ms, which is direct empirical evidence
+   for the problem this project exists to solve. Caveat: dev-set only, and
+   turn/hold/backchannel labels are derived from AMI word timestamps + DA
+   tags via a first-pass heuristic (see `training/build_turn_labels.py`),
+   not an independently-verified gold turn-taking annotation — treat as
+   preliminary until cross-checked against the literature's label
+   methodology and validated on the test split.
 2. Audio-only vs. text-only vs. audio+text fusion
 3. English vs. Hindi vs. Hinglish
 4. Clean vs. noisy audio
