@@ -92,24 +92,28 @@ baseline-vs-treatment comparison with real numbers, not before/after prose claim
 
 1. Fixed VAD thresholds vs. learned turn detector
 
-   **Preliminary result (fixed-VAD side only, AMI dev set, n=7889 utterances,
+   **Preliminary result (fixed-VAD side only, AMI dev set, n=7923 utterances,
    learned-model comparison still pending):**
 
    | threshold | precision | recall | F1 | false interruption rate | missed turn rate |
    |---|---|---|---|---|---|
-   | 300ms | 0.548 | 0.807 | 0.653 | 0.964 | 0.193 |
-   | 500ms | 0.521 | 0.692 | 0.594 | 0.923 | 0.308 |
-   | 700ms | 0.501 | 0.610 | 0.550 | 0.881 | 0.390 |
-   | 900ms | 0.480 | 0.531 | 0.504 | 0.836 | 0.469 |
+   | 300ms | 0.583 | 0.818 | 0.681 | 0.988 | 0.182 |
+   | 500ms | 0.554 | 0.709 | 0.622 | 0.965 | 0.291 |
+   | 700ms | 0.532 | 0.629 | 0.576 | 0.938 | 0.371 |
+   | 900ms | 0.510 | 0.554 | 0.531 | 0.901 | 0.446 |
 
    Reproduce: `python training/download_ami.py dev && python training/build_turn_labels.py dev && python evaluation/turn_eval.py dev`
 
    False-interruption rate here means: of all utterances where the same
    speaker was just pausing (not actually done), what fraction had a pause
    long enough that a fixed threshold would wrongly think they were done.
-   84-96% is strikingly high — same-speaker thinking pauses in real meeting
+   90-99% is strikingly high — same-speaker thinking pauses in real meeting
    speech routinely exceed even 900ms, which is direct empirical evidence
-   for the problem this project exists to solve. Caveat: dev-set only, and
+   for the problem this project exists to solve. One likely contributor:
+   AMI meeting speech (task-based, multi-party) probably has longer natural
+   pauses than a 1:1 voice-agent conversation would, so absolute rates here
+   may not transfer directly — the comparison that matters (fixed vs.
+   learned, on the same data) still holds. Caveat: dev-set only, and
    turn/hold/backchannel labels are derived from AMI word timestamps + DA
    tags via a first-pass heuristic (see `training/build_turn_labels.py`),
    not an independently-verified gold turn-taking annotation — treat as

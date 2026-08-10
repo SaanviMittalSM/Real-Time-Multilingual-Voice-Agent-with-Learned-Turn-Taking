@@ -21,9 +21,12 @@ Pipeline per meeting:
        - "hold_long"   : same speaker resumes after a pause >= HOLD_SPLIT_MS
                          ("needs more wait time" — a hesitation/thinking
                          pause that doesn't hand off the floor).
-       - "backchannel" : the next utterance (from another speaker) is
-                         DA-tagged "bck" and doesn't take the floor; the
-                         ORIGINAL speaker's utterance is still a hold.
+       - "backchannel" : the utterance itself is DA-tagged "bck" (e.g.
+                         "mm-hmm", "yeah") - a class in its own right, not
+                         a real turn attempt. When looking for what happens
+                         after some OTHER utterance's pause, backchannels
+                         are looked through rather than counted as the next
+                         turn-taking event.
 
 HOLD_SPLIT_MS is deliberately a tunable parameter, not a fixed constant —
 it's the same knob the fixed-VAD-threshold baseline uses, so sweeping it is
@@ -40,9 +43,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import config  # noqa: E402
 
 NITE_NS = "{http://nite.sourceforge.net/}"
-UTTERANCE_GAP_S = 0.3   # gap within which consecutive words are one utterance
+UTTERANCE_GAP_S = 0.1   # gap within which consecutive words are one utterance
 HOLD_SPLIT_MS = 700     # same-speaker pause >= this -> "hold_long" not "hold_short"
-BACKCHANNEL_MAX_GAP_S = 2.0  # how soon after utterance-end a backchannel counts
+
+# UTTERANCE_GAP_S must stay below the smallest fixed-VAD threshold evaluation.turn_eval
+# tests (300ms) - otherwise no "hold" pause can ever be shorter than the merge gap itself,
+# which silently caps the minimum observable pause and degenerates the 300ms comparison.
 
 WORD_ID_RE = re.compile(r"id\(([^)]+)\)")
 
@@ -175,22 +181,35 @@ def build_meeting_labels(meeting_id, annotations_root: Path):
     labeled = []
     for i, u in enumerate(all_utterances):
         if u["is_backchannel"]:
-            continue  # backchannels are events *about* someone else's turn, not turn-holders themselves
+            # The utterance itself IS a backchannel ("mm-hmm", "yeah") - this is one of the
+            # four target classes directly, not a property of someone else's turn.
+            labeled.append({
+                "meeting_id": meeting_id,
+                "speaker": u["speaker"],
+                "text": u["text"],
+                "utterance_start": u["start"],
+                "utterance_end": u["end"],
+                "pause_after_s": None,
+                "next_speaker": None,
+                "label": "backchannel",
+            })
+            continue
 
-        # find the next utterance from ANY speaker that starts after this one ends
+        # Find the next REAL (non-backchannel) utterance from any speaker. Backchannels
+        # occurring during this speaker's pause don't count as "someone took the floor" -
+        # they're looked through, not treated as the next turn-taking event.
         next_u, next_gap = None, None
         for cand in all_utterances[i + 1:]:
-            if cand["start"] >= u["end"]:
-                next_u = cand
-                next_gap = cand["start"] - u["end"]
-                break
+            if cand["start"] < u["end"] or cand["is_backchannel"]:
+                continue
+            next_u = cand
+            next_gap = cand["start"] - u["end"]
+            break
 
         if next_u is None:
-            label = "shift"  # last utterance of the meeting for this speaker; treat as turn end
+            label = "shift"  # last real utterance of the meeting for this speaker; treat as turn end
         elif next_u["speaker"] == u["speaker"]:
             label = "hold_long" if next_gap * 1000 >= HOLD_SPLIT_MS else "hold_short"
-        elif next_u["is_backchannel"] and next_gap <= BACKCHANNEL_MAX_GAP_S:
-            label = "backchannel_response"  # someone backchannels; original speaker still holds
         else:
             label = "shift"
 
