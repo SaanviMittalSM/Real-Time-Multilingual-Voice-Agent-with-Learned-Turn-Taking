@@ -56,8 +56,11 @@ def train(train_manifest, dev_manifest, train_audio_root, dev_audio_root,
 
     train_ds = TurnDataset(train_manifest, train_audio_root, vocab)
     dev_ds = TurnDataset(dev_manifest, dev_audio_root, vocab)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0)
-    dev_loader = DataLoader(dev_ds, batch_size=batch_size, shuffle=False, num_workers=0)
+    num_workers = 4 if device != "cpu" else 0  # overlap disk-bound audio loading with GPU compute
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                               num_workers=num_workers, persistent_workers=num_workers > 0)
+    dev_loader = DataLoader(dev_ds, batch_size=batch_size, shuffle=False,
+                             num_workers=num_workers, persistent_workers=num_workers > 0)
 
     model = TurnDetector(vocab_size=len(vocab)).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -65,17 +68,31 @@ def train(train_manifest, dev_manifest, train_audio_root, dev_audio_root,
     criterion = nn.CrossEntropyLoss(weight=weights)
 
     best_dev_loss = float("inf")
+    history = []
     for epoch in range(epochs):
         train_loss, _, _ = run_epoch(model, train_loader, optimizer, criterion, device, train=True)
         dev_loss, dev_preds, dev_labels = run_epoch(model, dev_loader, optimizer, criterion, device, train=False)
         print(f"epoch {epoch+1}/{epochs}  train_loss={train_loss:.4f}  dev_loss={dev_loss:.4f}")
+        history.append({"epoch": epoch + 1, "train_loss": train_loss, "dev_loss": dev_loss})
 
         if dev_loss < best_dev_loss:
             best_dev_loss = dev_loss
             torch.save(model.state_dict(), checkpoint_dir / "best_model.pt")
 
+    report_text = classification_report(dev_labels, dev_preds, target_names=LABELS, zero_division=0)
+    report_dict = classification_report(dev_labels, dev_preds, target_names=LABELS, zero_division=0, output_dict=True)
     print("\nFinal dev-set classification report:")
-    print(classification_report(dev_labels, dev_preds, target_names=LABELS, zero_division=0))
+    print(report_text)
+
+    with open(checkpoint_dir / "training_results.json", "w") as f:
+        json.dump({
+            "history": history,
+            "best_dev_loss": best_dev_loss,
+            "final_dev_classification_report": report_dict,
+            "n_train": len(train_records),
+            "n_dev": len(dev_ds),
+        }, f, indent=2)
+
     return model, vocab
 
 
