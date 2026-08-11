@@ -10,6 +10,7 @@ separately — see the 22MB zip at
 https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip
 """
 
+import http.client
 import sys
 import time
 import urllib.request
@@ -38,20 +39,32 @@ def meeting_ids_for(prefixes):
     return [f"{prefix}{letter}" for prefix in prefixes for letter in SUB_LETTERS]
 
 
-def download(url, dest: Path):
+def download(url, dest: Path, max_retries=4):
     if dest.exists() and dest.stat().st_size > 0:
         return "cached"
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            with open(dest, "wb") as f:
-                f.write(resp.read())
-        return "ok"
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return "missing"
-        raise
+
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                tmp_dest = dest.with_suffix(dest.suffix + ".part")
+                with open(tmp_dest, "wb") as f:
+                    f.write(resp.read())
+                tmp_dest.replace(dest)  # atomic: never leaves a truncated file at the real path
+            return "ok"
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return "missing"
+            last_error = e
+        except (urllib.error.URLError, ConnectionError, TimeoutError, http.client.IncompleteRead) as e:
+            last_error = e
+        if attempt < max_retries - 1:
+            time.sleep(2 ** attempt)  # 1s, 2s, 4s, ...
+
+    print(f"  WARNING: giving up on {url} after {max_retries} attempts ({last_error})")
+    return "failed"
 
 
 def download_split(split_name, out_root: Path):
