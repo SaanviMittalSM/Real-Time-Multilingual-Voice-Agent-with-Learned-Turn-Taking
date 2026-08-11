@@ -44,7 +44,7 @@ def run_epoch(model, loader, optimizer, criterion, device, train=True):
 
 
 def train(train_manifest, dev_manifest, train_audio_root, dev_audio_root,
-          epochs=10, batch_size=32, lr=1e-3, device=None, checkpoint_dir=None):
+          epochs=10, batch_size=32, lr=1e-3, device=None, checkpoint_dir=None, patience=3):
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     checkpoint_dir = Path(checkpoint_dir or config.MODEL_WEIGHTS_DIR / "turn_detector")
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +69,8 @@ def train(train_manifest, dev_manifest, train_audio_root, dev_audio_root,
     criterion = nn.CrossEntropyLoss(weight=weights)
 
     best_dev_loss = float("inf")
+    best_epoch = 0
+    epochs_since_best = 0
     history = []
     for epoch in range(epochs):
         train_loss, _, _ = run_epoch(model, train_loader, optimizer, criterion, device, train=True)
@@ -78,16 +80,30 @@ def train(train_manifest, dev_manifest, train_audio_root, dev_audio_root,
 
         if dev_loss < best_dev_loss:
             best_dev_loss = dev_loss
+            best_epoch = epoch + 1
+            epochs_since_best = 0
             torch.save(model.state_dict(), checkpoint_dir / "best_model.pt")
+        else:
+            epochs_since_best += 1
+            if epochs_since_best >= patience:
+                print(f"Early stopping: no dev improvement in {patience} epochs (best was epoch {best_epoch})")
+                break
+
+    # Report on the BEST checkpoint, not whatever epoch training happened to stop on -
+    # dev loss was rising for most of this run, so the last epoch is the most overfit one.
+    model.load_state_dict(torch.load(checkpoint_dir / "best_model.pt"))
+    _, dev_preds, dev_labels = run_epoch(model, dev_loader, optimizer, criterion, device, train=False)
 
     report_text = classification_report(dev_labels, dev_preds, target_names=LABELS, zero_division=0)
     report_dict = classification_report(dev_labels, dev_preds, target_names=LABELS, zero_division=0, output_dict=True)
-    print("\nFinal dev-set classification report:")
+    print(f"\nBest checkpoint: epoch {best_epoch} (dev_loss={best_dev_loss:.4f})")
+    print("Dev-set classification report (best checkpoint):")
     print(report_text)
 
     with open(checkpoint_dir / "training_results.json", "w") as f:
         json.dump({
             "history": history,
+            "best_epoch": best_epoch,
             "best_dev_loss": best_dev_loss,
             "final_dev_classification_report": report_dict,
             "n_train": len(train_records),
