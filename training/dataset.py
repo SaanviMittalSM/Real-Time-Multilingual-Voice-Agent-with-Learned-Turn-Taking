@@ -22,7 +22,7 @@ def tokenize(text):
     return TOKEN_RE.findall(text.lower())
 
 
-def build_vocab(records, max_size=5000):
+def build_vocab(records, max_size=2000):
     counts = Counter()
     for r in records:
         counts.update(tokenize(r["text"]))

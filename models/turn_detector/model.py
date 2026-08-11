@@ -21,17 +21,19 @@ LABEL_TO_IDX = {label: i for i, label in enumerate(LABELS)}
 class AudioEncoder(nn.Module):
     """Log-mel spectrogram -> small CNN -> pooled embedding."""
 
-    def __init__(self, n_mels=40, embed_dim=64):
+    def __init__(self, n_mels=40, embed_dim=64, dropout=0.3):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(1, 16, kernel_size=3, padding=1),
             nn.BatchNorm2d(16),
             nn.ReLU(),
             nn.MaxPool2d(2),
+            nn.Dropout2d(dropout),
             nn.Conv2d(16, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.MaxPool2d(2),
+            nn.Dropout2d(dropout),
         )
         self.pool = nn.AdaptiveAvgPool2d((1, 1))
         self.proj = nn.Linear(32, embed_dim)
@@ -45,18 +47,27 @@ class AudioEncoder(nn.Module):
 
 
 class TextEncoder(nn.Module):
-    """Token ids (partial transcript) -> embedding -> GRU -> pooled embedding."""
+    """Token ids (partial transcript) -> embedding -> GRU -> pooled embedding.
 
-    def __init__(self, vocab_size, embed_dim=64, hidden_dim=64):
+    Dropout on the embeddings matters more than it might seem here: with a
+    5000-word vocab and only ~41k training utterances, a handful of highly
+    class-predictive words (e.g. "yeah"/"mm-hmm" for backchannel) let the
+    model memorize rather than generalize if left unregularized - which is
+    exactly what happened in the first training run (best epoch was epoch 1).
+    """
+
+    def __init__(self, vocab_size, embed_dim=64, hidden_dim=64, dropout=0.3):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
+        self.embed_dropout = nn.Dropout(dropout)
         self.gru = nn.GRU(embed_dim, hidden_dim, batch_first=True)
+        self.out_dropout = nn.Dropout(dropout)
 
     def forward(self, token_ids):
         # token_ids: (batch, seq_len)
-        x = self.embedding(token_ids)
+        x = self.embed_dropout(self.embedding(token_ids))
         _, h_n = self.gru(x)
-        return h_n.squeeze(0)  # (batch, hidden_dim)
+        return self.out_dropout(h_n.squeeze(0))  # (batch, hidden_dim)
 
 
 class TurnDetector(nn.Module):

@@ -44,7 +44,8 @@ def run_epoch(model, loader, optimizer, criterion, device, train=True):
 
 
 def train(train_manifest, dev_manifest, train_audio_root, dev_audio_root,
-          epochs=10, batch_size=32, lr=1e-3, device=None, checkpoint_dir=None, patience=3):
+          epochs=10, batch_size=32, lr=3e-4, weight_decay=1e-4, device=None,
+          checkpoint_dir=None, patience=3):
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     checkpoint_dir = Path(checkpoint_dir or config.MODEL_WEIGHTS_DIR / "turn_detector")
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -64,7 +65,7 @@ def train(train_manifest, dev_manifest, train_audio_root, dev_audio_root,
     dev_loader = DataLoader(dev_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     model = TurnDetector(vocab_size=len(vocab)).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     weights = class_weights(train_records).to(device)
     criterion = nn.CrossEntropyLoss(weight=weights)
 
