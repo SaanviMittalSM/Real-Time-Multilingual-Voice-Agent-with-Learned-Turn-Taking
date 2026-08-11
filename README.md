@@ -1,16 +1,17 @@
 # Real-Time Multilingual Voice Agent with Learned Turn-Taking
 
-> **Status: Phase 1/2 — scaffolding + baseline pipeline under construction.**
-> No experiments have been run yet. Every metric placeholder below is explicitly marked
-> "not yet measured" and will only be filled in once produced by the code in this repo
-> (see [Reproducibility](#reproducibility)). No numbers on this page are estimated or
-> assumed — if it's not measured, it's not written down.
+> **Status: Phase 3 in progress — baseline pipeline done, first learned turn-detector
+> result in, not yet beating the baseline cleanly (see Experiment 1 below).**
+> Every metric on this page came from code in this repo (see
+> [Reproducibility](#reproducibility)) — nothing here is estimated or assumed. Where a
+> result is preliminary or not favorable, that's stated explicitly rather than omitted.
 
 ## Key Results
 
 | Metric | Value |
 |---|---|
-| Turn Detection F1 (learned vs. fixed VAD) | not yet measured |
+| Turn Detection F1, fixed-VAD baseline (dev) | 0.68 best-case (300ms) — see Experiment 1 |
+| Turn Detection F1, learned model shift-class (dev) | 0.63 — not yet beating baseline; see Experiment 1 caveats |
 | ASR WER — English / Hindi / Hinglish | not yet measured |
 | p50 / p95 / p99 end-to-end latency | not yet measured |
 | INT8 CPU speedup vs FP32 | not yet measured |
@@ -119,6 +120,38 @@ baseline-vs-treatment comparison with real numbers, not before/after prose claim
    not an independently-verified gold turn-taking annotation — treat as
    preliminary until cross-checked against the literature's label
    methodology and validated on the test split.
+
+   **First learned-model result (dev set, small from-scratch audio+text
+   fusion model, early-stopped at epoch 1 — see
+   `training/train_turn_detector.py`):**
+
+   | class | precision | recall | F1 | support |
+   |---|---|---|---|---|
+   | shift | 0.65 | 0.62 | 0.63 | 5009 |
+   | hold_short | 0.10 | 0.55 | 0.17 | 181 |
+   | hold_long | 0.39 | 0.17 | 0.24 | 2761 |
+   | backchannel | 0.55 | 0.93 | 0.69 | 1429 |
+
+   Reproduce: `python training/train_turn_detector.py --epochs 15 --batch-size 32`
+
+   **Not a clean win over the fixed-VAD baseline, and that's worth being
+   precise about rather than glossing over.** Shift-detection F1 (0.63) is
+   actually slightly *below* the best fixed-VAD threshold's F1 (0.68 at
+   300ms). But the comparison isn't apples-to-apples: the fixed-VAD
+   baseline gets to observe the *actual pause duration* before deciding
+   (reactive - wait and see), while the learned model here predicts using
+   only audio from *before* the pause even starts (zero-latency - no
+   waiting at all). That's a strictly harder task, and it's the more
+   interesting one for the project's actual goal (respond fast, not just
+   accurately). Also notable: the model overfits almost immediately (dev
+   loss rises every epoch after epoch 1) and hold_short/hold_long F1 are
+   weak (0.17/0.24) - both point to needing more regularization, a richer
+   feature set (explicit pitch/energy, longer audio context), and better
+   use of training signal rather than just more epochs. Next steps: feed
+   the model the pause duration as it accrues in real time (closer to how
+   it would actually run in deployment, and a genuinely apples-to-apples
+   comparison to fixed-VAD), and address the overfitting before drawing
+   further conclusions from this architecture.
 2. Audio-only vs. text-only vs. audio+text fusion
 3. English vs. Hindi vs. Hinglish
 4. Clean vs. noisy audio
