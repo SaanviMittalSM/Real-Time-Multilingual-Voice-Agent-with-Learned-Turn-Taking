@@ -56,11 +56,12 @@ def train(train_manifest, dev_manifest, train_audio_root, dev_audio_root,
 
     train_ds = TurnDataset(train_manifest, train_audio_root, vocab)
     dev_ds = TurnDataset(dev_manifest, dev_audio_root, vocab)
-    num_workers = 4 if device != "cpu" else 0  # overlap disk-bound audio loading with GPU compute
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                               num_workers=num_workers, persistent_workers=num_workers > 0)
-    dev_loader = DataLoader(dev_ds, batch_size=batch_size, shuffle=False,
-                             num_workers=num_workers, persistent_workers=num_workers > 0)
+    # num_workers>0 caused CUDA instability (CUBLAS_STATUS_EXECUTION_FAILED) on Windows in
+    # testing - possibly a spawn/CUDA-context interaction. Single-process loading is slower
+    # but reliable; revisit if training throughput becomes a real bottleneck.
+    num_workers = 0
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    dev_loader = DataLoader(dev_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     model = TurnDetector(vocab_size=len(vocab)).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)

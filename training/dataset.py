@@ -61,6 +61,8 @@ class TurnDataset(Dataset):
             audio, _ = sf.read(str(wav_path), start=start_sample, frames=n_frames, dtype="float32")
         except Exception:
             audio = np.zeros(self.max_audio_samples, dtype="float32")
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)  # some AMI headset files are stereo; force mono
         if len(audio) < self.max_audio_samples:
             pad = np.zeros(self.max_audio_samples - len(audio), dtype="float32")
             audio = np.concatenate([pad, audio])
