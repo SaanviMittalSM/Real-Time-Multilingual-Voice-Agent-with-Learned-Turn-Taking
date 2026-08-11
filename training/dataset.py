@@ -8,6 +8,7 @@ import numpy as np
 import soundfile as sf
 import torch
 import torchaudio
+import torchaudio.functional as AF
 from torch.utils.data import Dataset
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -16,6 +17,45 @@ from models.turn_detector.model import LABEL_TO_IDX  # noqa: E402
 
 PAD, UNK = "<pad>", "<unk>"
 TOKEN_RE = re.compile(r"[a-z']+")
+TAIL_SECONDS = 0.5  # window at the END of the utterance where pitch/energy trend is measured
+N_AUX_FEATURES = 6  # duration, energy_tail, energy_full, pitch_tail_mean, pitch_tail_slope, voiced_fraction
+
+
+def extract_acoustic_features(audio: torch.Tensor, sample_rate: int):
+    """Engineered pitch/energy features over the tail of the utterance.
+
+    Falling pitch and dropping energy right before a pause are classic
+    turn-yielding cues in the turn-taking literature - this gives the model
+    explicit access to them rather than hoping the CNN discovers the same
+    pattern in a raw mel-spectrogram from only ~41k training examples.
+    """
+    tail_samples = int(TAIL_SECONDS * sample_rate)
+    tail = audio[-tail_samples:] if len(audio) >= tail_samples else audio
+
+    energy_tail = tail.pow(2).mean().sqrt().item()
+    energy_full = audio.pow(2).mean().sqrt().item()
+
+    # detect_pitch_frequency never returns exactly 0 for unvoiced/silent frames - on pure
+    # silence it returns a degenerate ~2667Hz value, and on noise it returns near-random
+    # values, neither of which is a real pitch. Gate to plausible human voice F0 instead.
+    pitch = AF.detect_pitch_frequency(tail.unsqueeze(0), sample_rate).squeeze(0)
+    voiced = pitch[(pitch >= 60) & (pitch <= 400)]
+    if len(voiced) >= 2:
+        pitch_mean = voiced.mean().item()
+        pitch_slope = (voiced[-1] - voiced[0]).item()
+    elif len(voiced) == 1:
+        pitch_mean = voiced.item()
+        pitch_slope = 0.0
+    else:
+        pitch_mean = 0.0
+        pitch_slope = 0.0
+    voiced_fraction = len(voiced) / max(len(pitch), 1)
+
+    return [
+        np.log1p(energy_tail), np.log1p(energy_full),
+        pitch_mean / 100.0, pitch_slope / 100.0,  # scaled roughly to unit range (F0 ~85-400Hz)
+        voiced_fraction,
+    ]
 
 
 def tokenize(text):
@@ -83,7 +123,8 @@ class TurnDataset(Dataset):
         token_ids = self._tokenize(r["text"])
 
         duration = r["utterance_end"] - r["utterance_start"]
-        aux = torch.tensor([np.log1p(duration)], dtype=torch.float32)
+        acoustic_features = extract_acoustic_features(audio, self.sample_rate)
+        aux = torch.tensor([np.log1p(duration)] + acoustic_features, dtype=torch.float32)
 
         label = torch.tensor(LABEL_TO_IDX[r["label"]], dtype=torch.long)
         return mel_spec, token_ids, aux, label

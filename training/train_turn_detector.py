@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import config  # noqa: E402
-from dataset import TurnDataset, build_vocab  # noqa: E402
+from dataset import N_AUX_FEATURES, TurnDataset, build_vocab  # noqa: E402
 from models.turn_detector.model import LABELS, TurnDetector  # noqa: E402
 
 
@@ -64,7 +64,7 @@ def train(train_manifest, dev_manifest, train_audio_root, dev_audio_root,
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     dev_loader = DataLoader(dev_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
-    model = TurnDetector(vocab_size=len(vocab)).to(device)
+    model = TurnDetector(vocab_size=len(vocab), n_aux_features=N_AUX_FEATURES).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     weights = class_weights(train_records).to(device)
     criterion = nn.CrossEntropyLoss(weight=weights)
