@@ -74,7 +74,7 @@ def build_vocab(records, max_size=2000):
 
 class TurnDataset(Dataset):
     def __init__(self, manifest_path, audio_root, vocab, max_audio_seconds=2.0,
-                 n_mels=40, sample_rate=16000, max_text_tokens=30):
+                 n_mels=40, sample_rate=16000, max_text_tokens=30, acoustic_features_cache=None):
         records = json.load(open(manifest_path))
         # backchannel records have no pause_after_s / next-turn context computed;
         # they're still a valid class to recognize from audio+text alone.
@@ -88,6 +88,23 @@ class TurnDataset(Dataset):
             sample_rate=sample_rate, n_mels=n_mels, n_fft=400, hop_length=160
         )
         self.db = torchaudio.transforms.AmplitudeToDB()
+
+        # Precomputed by training/precompute_acoustic_features.py - pitch detection costs
+        # ~21ms/call and dominates __getitem__ cost, so recomputing it every epoch (as the
+        # first version of this class did) turned a ~30min training run into 16+ hours.
+        self.acoustic_cache = None
+        if acoustic_features_cache is None:
+            acoustic_features_cache = Path(manifest_path).parent / (
+                "acoustic_features_" + Path(manifest_path).stem.replace("turn_labels_", "") + ".json"
+            )
+        if acoustic_features_cache is not False and Path(acoustic_features_cache).exists():
+            acoustic_features_cache = Path(acoustic_features_cache)
+            self.acoustic_cache = json.load(open(acoustic_features_cache))
+            if len(self.acoustic_cache) != len(self.records):
+                raise ValueError(
+                    f"{acoustic_features_cache} has {len(self.acoustic_cache)} entries but "
+                    f"manifest has {len(self.records)} - stale cache, re-run precompute_acoustic_features.py"
+                )
 
     def __len__(self):
         return len(self.records)
@@ -123,7 +140,10 @@ class TurnDataset(Dataset):
         token_ids = self._tokenize(r["text"])
 
         duration = r["utterance_end"] - r["utterance_start"]
-        acoustic_features = extract_acoustic_features(audio, self.sample_rate)
+        if self.acoustic_cache is not None:
+            acoustic_features = self.acoustic_cache[idx]
+        else:
+            acoustic_features = extract_acoustic_features(audio, self.sample_rate)
         aux = torch.tensor([np.log1p(duration)] + acoustic_features, dtype=torch.float32)
 
         label = torch.tensor(LABEL_TO_IDX[r["label"]], dtype=torch.long)
