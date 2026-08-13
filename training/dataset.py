@@ -19,6 +19,7 @@ PAD, UNK = "<pad>", "<unk>"
 TOKEN_RE = re.compile(r"[a-z']+")
 TAIL_SECONDS = 0.5  # window at the END of the utterance where pitch/energy trend is measured
 N_AUX_FEATURES = 6  # duration, energy_tail, energy_full, pitch_tail_mean, pitch_tail_slope, voiced_fraction
+N_AUX_FEATURES_PAUSE_AWARE = N_AUX_FEATURES + 1  # + the actual observed pause duration
 
 
 def extract_acoustic_features(audio: torch.Tensor, sample_rate: int):
@@ -74,7 +75,8 @@ def build_vocab(records, max_size=2000):
 
 class TurnDataset(Dataset):
     def __init__(self, manifest_path, audio_root, vocab, max_audio_seconds=2.0,
-                 n_mels=40, sample_rate=16000, max_text_tokens=30, acoustic_features_cache=None):
+                 n_mels=40, sample_rate=16000, max_text_tokens=30, acoustic_features_cache=None,
+                 include_pause_feature=False):
         records = json.load(open(manifest_path))
         # backchannel records have no pause_after_s / next-turn context computed;
         # they're still a valid class to recognize from audio+text alone.
@@ -84,6 +86,12 @@ class TurnDataset(Dataset):
         self.sample_rate = sample_rate
         self.max_audio_samples = int(max_audio_seconds * sample_rate)
         self.max_text_tokens = max_text_tokens
+        # Pause-aware variant: gives the model the actual observed pause duration, same
+        # information a fixed-VAD threshold implicitly uses when it fires - this is the
+        # apples-to-apples comparison. Default (False) is the zero-latency variant, which
+        # predicts using only audio/text from BEFORE the pause starts (a harder task, but
+        # the one that matters for actually responding faster than fixed-VAD).
+        self.include_pause_feature = include_pause_feature
         self.mel = torchaudio.transforms.MelSpectrogram(
             sample_rate=sample_rate, n_mels=n_mels, n_fft=400, hop_length=160
         )
@@ -144,7 +152,11 @@ class TurnDataset(Dataset):
             acoustic_features = self.acoustic_cache[idx]
         else:
             acoustic_features = extract_acoustic_features(audio, self.sample_rate)
-        aux = torch.tensor([np.log1p(duration)] + acoustic_features, dtype=torch.float32)
+        aux_values = [np.log1p(duration)] + acoustic_features
+        if self.include_pause_feature:
+            pause = r.get("pause_after_s")
+            aux_values.append(np.log1p(pause) if pause is not None else 0.0)
+        aux = torch.tensor(aux_values, dtype=torch.float32)
 
         label = torch.tensor(LABEL_TO_IDX[r["label"]], dtype=torch.long)
         return mel_spec, token_ids, aux, label

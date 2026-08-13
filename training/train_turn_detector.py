@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import config  # noqa: E402
-from dataset import N_AUX_FEATURES, TurnDataset, build_vocab  # noqa: E402
+from dataset import N_AUX_FEATURES, N_AUX_FEATURES_PAUSE_AWARE, TurnDataset, build_vocab  # noqa: E402
 from models.turn_detector.model import LABELS, TurnDetector  # noqa: E402
 
 
@@ -45,9 +45,10 @@ def run_epoch(model, loader, optimizer, criterion, device, train=True):
 
 def train(train_manifest, dev_manifest, train_audio_root, dev_audio_root,
           epochs=10, batch_size=32, lr=3e-4, weight_decay=1e-4, device=None,
-          checkpoint_dir=None, patience=3):
+          checkpoint_dir=None, patience=3, pause_aware=False):
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    checkpoint_dir = Path(checkpoint_dir or config.MODEL_WEIGHTS_DIR / "turn_detector")
+    default_dir_name = "turn_detector_pause_aware" if pause_aware else "turn_detector"
+    checkpoint_dir = Path(checkpoint_dir or config.MODEL_WEIGHTS_DIR / default_dir_name)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     train_records = json.load(open(train_manifest))
@@ -55,8 +56,8 @@ def train(train_manifest, dev_manifest, train_audio_root, dev_audio_root,
     with open(checkpoint_dir / "vocab.json", "w") as f:
         json.dump(vocab, f)
 
-    train_ds = TurnDataset(train_manifest, train_audio_root, vocab)
-    dev_ds = TurnDataset(dev_manifest, dev_audio_root, vocab)
+    train_ds = TurnDataset(train_manifest, train_audio_root, vocab, include_pause_feature=pause_aware)
+    dev_ds = TurnDataset(dev_manifest, dev_audio_root, vocab, include_pause_feature=pause_aware)
     # num_workers>0 caused CUDA instability (CUBLAS_STATUS_EXECUTION_FAILED) on Windows in
     # testing - possibly a spawn/CUDA-context interaction. Single-process loading is slower
     # but reliable; revisit if training throughput becomes a real bottleneck.
@@ -64,7 +65,8 @@ def train(train_manifest, dev_manifest, train_audio_root, dev_audio_root,
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     dev_loader = DataLoader(dev_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
-    model = TurnDetector(vocab_size=len(vocab), n_aux_features=N_AUX_FEATURES).to(device)
+    n_aux = N_AUX_FEATURES_PAUSE_AWARE if pause_aware else N_AUX_FEATURES
+    model = TurnDetector(vocab_size=len(vocab), n_aux_features=n_aux).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     weights = class_weights(train_records).to(device)
     criterion = nn.CrossEntropyLoss(weight=weights)
@@ -122,6 +124,10 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--smoke-test", action="store_true",
                          help="Train and validate on the dev set only, to sanity-check the pipeline.")
+    parser.add_argument("--pause-aware", action="store_true",
+                         help="Include the actual observed pause duration as a feature - the "
+                              "apples-to-apples comparison against fixed-VAD (which implicitly "
+                              "uses the same information). Saves to a separate checkpoint dir.")
     args = parser.parse_args()
 
     manifests = config.DATA_DIR / "manifests"
@@ -131,11 +137,11 @@ if __name__ == "__main__":
         train(
             manifests / "turn_labels_dev.json", manifests / "turn_labels_dev.json",
             audio_root / "dev", audio_root / "dev",
-            epochs=args.epochs, batch_size=args.batch_size,
+            epochs=args.epochs, batch_size=args.batch_size, pause_aware=args.pause_aware,
         )
     else:
         train(
             manifests / "turn_labels_train.json", manifests / "turn_labels_dev.json",
             audio_root / "train", audio_root / "dev",
-            epochs=args.epochs, batch_size=args.batch_size,
+            epochs=args.epochs, batch_size=args.batch_size, pause_aware=args.pause_aware,
         )
