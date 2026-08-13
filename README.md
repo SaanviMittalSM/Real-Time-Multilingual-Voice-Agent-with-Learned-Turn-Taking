@@ -175,10 +175,43 @@ baseline-vs-treatment comparison with real numbers, not before/after prose claim
    caught and fixed (see `training/precompute_acoustic_features.py`) -
    profiling before assuming code is "fast enough" mattered here.
 
-   Next directions worth trying: a longer audio context window, an
-   attention-based fusion instead of concatenation, and the
-   pause-duration-aware variant described above for a genuinely
-   apples-to-apples comparison against fixed-VAD.
+   3. Added a **pause-aware variant** (`--pause-aware` flag): gives the
+      model the actual observed pause duration as an input feature, the
+      same information a fixed-VAD threshold implicitly uses when it
+      fires - this is the genuinely apples-to-apples comparison. Test-set
+      result:
+
+      | class | precision | recall | F1 | support |
+      |---|---|---|---|---|
+      | shift | 0.90 | 0.42 | 0.57 | 4242 |
+      | hold_short | 0.24 | 0.73 | 0.37 | 98 |
+      | hold_long | 0.55 | 0.93 | 0.69 | 2790 |
+      | backchannel | 0.94 | 1.00 | 0.97 | 1954 |
+      | **overall accuracy** | | | **0.70** | 9084 |
+
+      Reproduce: `python training/train_turn_detector.py --epochs 25 --batch-size 32 --pause-aware && python training/evaluate_turn_detector.py test --pause-aware`
+
+      **A genuinely surprising, honestly-reported result: giving the model
+      the same information as the baseline made overall accuracy jump from
+      0.53 to 0.70, but shift-detection F1 got *worse* (0.61 → 0.57), not
+      better.** The model became very conservative about predicting
+      "shift" (precision 0.90, recall only 0.42) and instead leans on
+      hold_long far more than before (recall 0.93). It did *not* beat the
+      fixed-VAD baseline (0.656) even with equal information - the
+      opposite of what the "more information should help" intuition
+      predicts. Most likely cause: the class-weighted multi-class loss
+      (needed because backchannel/hold_short are rare) optimizes for
+      weighted/macro performance across all four classes, not specifically
+      for the shift-vs-not distinction that determines end-to-end latency
+      in a deployed system - the training objective and the metric that
+      actually matters aren't the same thing here. Next fix to try:
+      either a binary shift-vs-not training objective evaluated the same
+      way as the fixed-VAD baseline, or per-class threshold tuning instead
+      of relying on argmax over class-weighted logits.
+
+   Next directions worth trying: a binary shift-vs-not training objective
+   (see above), a longer audio context window, and attention-based fusion
+   instead of concatenation.
 2. Audio-only vs. text-only vs. audio+text fusion
 3. English vs. Hindi vs. Hinglish
 4. Clean vs. noisy audio
