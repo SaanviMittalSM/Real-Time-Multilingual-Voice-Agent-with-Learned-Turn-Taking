@@ -43,43 +43,47 @@ WER_NORMALIZE = jiwer.Compose(_BASE_NORMALIZE + [jiwer.ReduceToListOfListOfWords
 CER_NORMALIZE = jiwer.Compose(_BASE_NORMALIZE + [jiwer.ReduceToListOfListOfChars()])
 
 
-def load_english_samples(max_samples=None):
+def iter_english_samples(max_samples=None):
+    """Yields {"audio", "sr", "reference"} one at a time - the machine here has only
+    15GB RAM and materializing 100 samples' worth of decoded audio into a list
+    at once (as an earlier version of this script did) triggered allocation
+    failures, so audio is read lazily and never held onto past one transcription."""
     root = config.DATA_DIR / "raw" / "librispeech" / "LibriSpeech" / "test-clean"
-    samples = []
+    n = 0
     for trans_file in sorted(root.glob("*/*/*.trans.txt")):
         for line in trans_file.read_text(encoding="utf-8").splitlines():
+            if max_samples and n >= max_samples:
+                return
             utt_id, text = line.split(" ", 1)
             flac_path = trans_file.parent / f"{utt_id}.flac"
             audio, sr = sf.read(str(flac_path), dtype="float32")
-            samples.append({"audio": audio, "sr": sr, "reference": text, "language": "en"})
-            if max_samples and len(samples) >= max_samples:
-                return samples
-    return samples
+            yield {"audio": audio, "sr": sr, "reference": text}
+            n += 1
 
 
-def load_hindi_samples(max_samples=None):
+def iter_hindi_samples(max_samples=None):
     from datasets import Audio, load_dataset
 
     ds = load_dataset("google/fleurs", "hi_in", split="test")
     ds = ds.cast_column("audio", Audio(decode=False))
-    samples = []
-    for rec in ds:
+    for i, rec in enumerate(ds):
+        if max_samples and i >= max_samples:
+            return
         audio, sr = sf.read(io.BytesIO(rec["audio"]["bytes"]), dtype="float32")
-        samples.append({"audio": audio, "sr": sr, "reference": rec["transcription"], "language": "hi"})
-        if max_samples and len(samples) >= max_samples:
-            break
-    return samples
+        yield {"audio": audio, "sr": sr, "reference": rec["transcription"]}
 
 
-def load_hinglish_samples(max_samples=None):
+def iter_hinglish_samples(max_samples=None):
     root = config.DATA_DIR / "raw" / "mucs_hinglish" / "test"
     seg_map = {}
     for line in (root / "transcripts" / "segments").read_text(encoding="utf-8").splitlines():
         utt_id, rec_id, start, end = line.split()
         seg_map[utt_id] = (rec_id, float(start), float(end))
 
-    samples = []
+    n = 0
     for line in (root / "transcripts" / "text").read_text(encoding="utf-8").splitlines():
+        if max_samples and n >= max_samples:
+            return
         utt_id, text = line.split(" ", 1)
         rec_id, start, end = seg_map[utt_id]
         wav_path = root / f"{rec_id}.wav"
@@ -91,22 +95,20 @@ def load_hinglish_samples(max_samples=None):
         # Whisper has no distinct "Hinglish" language code - transcribe with
         # language="hi" and let it naturally handle the embedded English words,
         # which is exactly the real-world deployment condition being tested.
-        samples.append({"audio": audio, "sr": sr, "reference": text, "language": "hi"})
-        if max_samples and len(samples) >= max_samples:
-            break
-    return samples
+        yield {"audio": audio, "sr": sr, "reference": text}
+        n += 1
 
 
-def evaluate_language(name, samples, asr, whisper_language):
+def evaluate_language(name, sample_iter, asr, whisper_language):
     references, hypotheses = [], []
-    for s in samples:
+    for s in sample_iter:
         result = asr.transcribe(s["audio"], language=whisper_language)
         references.append(s["reference"])
         hypotheses.append(result["text"])
 
     wer = jiwer.wer(references, hypotheses, reference_transform=WER_NORMALIZE, hypothesis_transform=WER_NORMALIZE)
     cer = jiwer.cer(references, hypotheses, reference_transform=CER_NORMALIZE, hypothesis_transform=CER_NORMALIZE)
-    return {"language": name, "n_samples": len(samples), "wer": wer, "cer": cer}
+    return {"language": name, "n_samples": len(references), "wer": wer, "cer": cer}
 
 
 if __name__ == "__main__":
@@ -122,15 +124,13 @@ if __name__ == "__main__":
     asr = ASR(model_size=args.model_size)
 
     results = []
-    for name, loader, whisper_lang in [
-        ("english", load_english_samples, "en"),
-        ("hindi", load_hindi_samples, "hi"),
-        ("hinglish", load_hinglish_samples, "hi"),
+    for name, iter_fn, whisper_lang in [
+        ("english", iter_english_samples, "en"),
+        ("hindi", iter_hindi_samples, "hi"),
+        ("hinglish", iter_hinglish_samples, "hi"),
     ]:
-        print(f"\n[{name}] loading up to {args.max_samples} samples...")
-        samples = loader(max_samples=args.max_samples)
-        print(f"[{name}] loaded {len(samples)} samples (capped at {args.max_samples} - see --max-samples)")
-        result = evaluate_language(name, samples, asr, whisper_lang)
+        print(f"\n[{name}] streaming up to {args.max_samples} samples (capped - see --max-samples)...")
+        result = evaluate_language(name, iter_fn(max_samples=args.max_samples), asr, whisper_lang)
         results.append(result)
         print(f"[{name}] WER={result['wer']:.3f}  CER={result['cer']:.3f}  n={result['n_samples']}")
 
