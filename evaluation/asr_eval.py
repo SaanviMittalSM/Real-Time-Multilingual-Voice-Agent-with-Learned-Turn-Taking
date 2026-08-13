@@ -97,7 +97,7 @@ def evaluate_language(name, samples, asr, whisper_language):
         references.append(s["reference"])
         hypotheses.append(result["text"])
 
-    wer = jiwer.wer(references, hypotheses, truth_transform=NORMALIZE, hypothesis_transform=NORMALIZE)
+    wer = jiwer.wer(references, hypotheses, reference_transform=NORMALIZE, hypothesis_transform=NORMALIZE)
     cer = jiwer.cer(references, hypotheses)
     return {"language": name, "n_samples": len(samples), "wer": wer, "cer": cer}
 
