@@ -10,8 +10,8 @@
 
 | Metric | Value |
 |---|---|
-| Turn Detection F1, fixed-VAD baseline (dev) | 0.68 best-case (300ms) — see Experiment 1 |
-| Turn Detection F1, learned model shift-class (dev) | 0.64 — not yet beating baseline; see Experiment 1 caveats |
+| Turn Detection F1, fixed-VAD baseline (test) | 0.656 best-case (300ms) — see Experiment 1 |
+| Turn Detection F1, learned model shift-class (test) | 0.61 — not yet beating baseline; see Experiment 1 caveats |
 | ASR WER — English / Hindi / Hinglish | not yet measured |
 | p50 / p95 / p99 end-to-end latency | not yet measured |
 | INT8 CPU speedup vs FP32 | not yet measured |
@@ -121,46 +121,64 @@ baseline-vs-treatment comparison with real numbers, not before/after prose claim
    preliminary until cross-checked against the literature's label
    methodology and validated on the test split.
 
-   **Learned-model result (dev set, small from-scratch audio+text fusion
-   model, early-stopped at epoch 5 — see
-   `training/train_turn_detector.py`):**
+   **Learned-model result, held-out test set (small from-scratch audio+text
+   fusion model with explicit pitch/energy features, early-stopped at
+   epoch 2 — see `training/train_turn_detector.py` and
+   `training/evaluate_turn_detector.py`):**
 
    | class | precision | recall | F1 | support |
    |---|---|---|---|---|
-   | shift | 0.65 | 0.63 | 0.64 | 5009 |
-   | hold_short | 0.10 | 0.55 | 0.17 | 181 |
-   | hold_long | 0.40 | 0.14 | 0.21 | 2761 |
-   | backchannel | 0.52 | 0.96 | 0.67 | 1429 |
+   | shift | 0.61 | 0.61 | 0.61 | 4242 |
+   | hold_short | 0.06 | 0.72 | 0.11 | 98 |
+   | hold_long | 0.47 | 0.12 | 0.19 | 2790 |
+   | backchannel | 0.61 | 0.93 | 0.74 | 1954 |
 
-   Reproduce: `python training/train_turn_detector.py --epochs 25 --batch-size 32`
+   Reproduce: `python training/precompute_acoustic_features.py test --workers 2 && python training/evaluate_turn_detector.py test`
 
-   **Not a clean win over the fixed-VAD baseline, and that's worth being
-   precise about rather than glossing over.** Shift-detection F1 (0.64) is
-   still slightly *below* the best fixed-VAD threshold's F1 (0.68 at
-   300ms). But the comparison isn't apples-to-apples: the fixed-VAD
-   baseline gets to observe the *actual pause duration* before deciding
-   (reactive - wait and see), while the learned model here predicts using
-   only audio from *before* the pause even starts (zero-latency - no
-   waiting at all). That's a strictly harder task, and it's the more
-   interesting one for the project's actual goal (respond fast, not just
-   accurately).
+   **Not a clean win over the fixed-VAD baseline.** Shift-detection F1
+   (0.61 on test, 0.656 for the best fixed-VAD threshold on test) is
+   consistent with the dev-set gap (0.64 vs. 0.68) - the model generalizes
+   reasonably (it's not badly overfit) but doesn't beat the baseline. As
+   with the dev result, the comparison isn't strictly apples-to-apples: the
+   fixed-VAD baseline observes the *actual pause duration* before deciding
+   (reactive), while the learned model predicts using only audio from
+   *before* the pause starts (zero-latency). That's a harder task and the
+   more interesting one for the project's actual goal, but it's still
+   worth being direct that this architecture, as built so far, does not
+   yet outperform a fixed threshold on accuracy alone.
 
-   History: the first training run overfit almost immediately (best epoch
-   was epoch 1, dev loss rose every epoch after). Adding dropout throughout
-   both encoders (not just the fusion head), capping the vocab at 2000
-   words, and adding weight decay fixed that - the run above trained for a
-   healthy 5 epochs with a stable dev-loss curve before early stopping -
-   but it only moved shift-F1 from 0.63 to 0.64. Fixing overfitting made
-   the *training* honest; it didn't fix the *model's* ceiling. hold_long
-   F1 (0.21) is still weak, meaning the model struggles specifically to
-   tell "long thinking pause, same speaker continues" apart from "real
-   turn end" - arguably the single most important distinction for the
-   project's whole thesis. Next directions worth trying: explicit
-   pitch/energy features (known in the turn-taking literature to carry
-   strong turn-yielding cues that raw mel-spectrograms may not surface
-   with this little data), a longer audio context window, and the
+   **Iteration history, including a negative result:**
+   1. First run overfit almost immediately (best epoch 1, dev loss rose
+      every epoch after). Fixed with dropout throughout both encoders,
+      a smaller vocab (2000 words), and weight decay - training became
+      healthy (multiple stable epochs) but shift-F1 only moved 0.63 → 0.64.
+      Fixing overfitting made the *training* honest; it didn't raise the
+      *model's* ceiling.
+   2. Added explicit pitch/energy features (tail-window RMS energy, mean
+      and slope of pitch, voiced-frame fraction) - motivated by the
+      turn-taking literature's finding that falling pitch/energy are
+      strong turn-yielding cues. **Result: no meaningful change** (dev
+      shift-F1 0.64 → 0.64, hold_long F1 actually dropped 0.21 → 0.19).
+      This is a real negative result, not hidden here: either these
+      particular engineered features aren't adding information the CNN
+      wasn't already extracting from the raw mel-spectrogram, or the
+      fusion mechanism (simple concatenation) isn't using them well, or
+      there just isn't enough training data (~41k examples) for the
+      model to learn to rely on them. hold_long F1 (0.19) is still the
+      weakest class and the one that matters most for this project's
+      thesis - telling "long thinking pause, same speaker continues"
+      apart from "real turn end."
+
+   Also worth noting as an engineering lesson, not a research one: adding
+   the pitch-feature extraction step without caching it turned a ~5-minute
+   training run into one that pegged the CPU for 16+ hours before being
+   caught and fixed (see `training/precompute_acoustic_features.py`) -
+   profiling before assuming code is "fast enough" mattered here.
+
+   Next directions worth trying: a longer audio context window, an
+   attention-based fusion instead of concatenation, and the
    pause-duration-aware variant described above for a genuinely
-   apples-to-apples comparison.
+   apples-to-apples comparison against fixed-VAD.
 2. Audio-only vs. text-only vs. audio+text fusion
 3. English vs. Hindi vs. Hinglish
 4. Clean vs. noisy audio
