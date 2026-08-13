@@ -1,0 +1,4 @@
+# Phase 4: multilingual ASR WER benchmarking (English/Hindi/Hinglish)
+datasets==5.0.1
+jiwer==4.0.0
+torchcodec==0.15.0   # required by datasets for audio decoding (google/fleurs etc.)
