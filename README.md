@@ -1,7 +1,8 @@
 # Real-Time Multilingual Voice Agent with Learned Turn-Taking
 
-> **Status: Phase 3 in progress — baseline pipeline done, first learned turn-detector
-> result in, not yet beating the baseline cleanly (see Experiment 1 below).**
+> **Status: Phase 3 in progress — baseline pipeline done, learned turn detector (pause-aware
+> variant, threshold-tuned) beats the fixed-VAD baseline on held-out test (see Experiment 1).
+> Zero-latency variant does not yet beat it.**
 > Every metric on this page came from code in this repo (see
 > [Reproducibility](#reproducibility)) — nothing here is estimated or assumed. Where a
 > result is preliminary or not favorable, that's stated explicitly rather than omitted.
@@ -11,7 +12,8 @@
 | Metric | Value |
 |---|---|
 | Turn Detection F1, fixed-VAD baseline (test) | 0.656 best-case (300ms) — see Experiment 1 |
-| Turn Detection F1, learned model shift-class (test) | 0.61 — not yet beating baseline; see Experiment 1 caveats |
+| Turn Detection F1, learned model, pause-aware + threshold-tuned (test) | **0.750** — beats baseline; see Experiment 1 |
+| Turn Detection F1, learned model, zero-latency argmax (test) | 0.61 — does not yet beat baseline; see Experiment 1 caveats |
 | ASR WER — English / Hindi / Hinglish | not yet measured |
 | p50 / p95 / p99 end-to-end latency | not yet measured |
 | INT8 CPU speedup vs FP32 | not yet measured |
@@ -191,26 +193,47 @@ baseline-vs-treatment comparison with real numbers, not before/after prose claim
 
       Reproduce: `python training/train_turn_detector.py --epochs 25 --batch-size 32 --pause-aware && python training/evaluate_turn_detector.py test --pause-aware`
 
-      **A genuinely surprising, honestly-reported result: giving the model
-      the same information as the baseline made overall accuracy jump from
-      0.53 to 0.70, but shift-detection F1 got *worse* (0.61 → 0.57), not
-      better.** The model became very conservative about predicting
-      "shift" (precision 0.90, recall only 0.42) and instead leans on
-      hold_long far more than before (recall 0.93). It did *not* beat the
-      fixed-VAD baseline (0.656) even with equal information - the
-      opposite of what the "more information should help" intuition
-      predicts. Most likely cause: the class-weighted multi-class loss
-      (needed because backchannel/hold_short are rare) optimizes for
-      weighted/macro performance across all four classes, not specifically
-      for the shift-vs-not distinction that determines end-to-end latency
-      in a deployed system - the training objective and the metric that
-      actually matters aren't the same thing here. Next fix to try:
-      either a binary shift-vs-not training objective evaluated the same
-      way as the fixed-VAD baseline, or per-class threshold tuning instead
-      of relying on argmax over class-weighted logits.
+      **Surprising at first: giving the model the same information as the
+      baseline raised overall accuracy from 0.53 to 0.70, but shift-F1 via
+      raw argmax got *worse* (0.61 → 0.57), not better.** The model became
+      very conservative about predicting "shift" (precision 0.90, recall
+      only 0.42) and leaned on hold_long far more than before (recall
+      0.93). Diagnosis: the class-weighted multi-class loss (needed
+      because backchannel/hold_short are rare) optimizes for
+      macro/weighted performance across all four classes, not specifically
+      the shift-vs-not distinction that determines end-to-end latency -
+      the training objective and the metric that matters aren't the same
+      thing, so argmax's implicit 0.5 decision boundary was miscalibrated
+      for this specific question.
 
-   Next directions worth trying: a binary shift-vs-not training objective
-   (see above), a longer audio context window, and attention-based fusion
+   4. **Fix: tune the shift-probability decision threshold directly**
+      (`training/tune_shift_threshold.py`) instead of relying on argmax.
+      No retraining needed - just sweep thresholds on P(shift) using dev,
+      pick the one that maximizes binary shift-vs-not F1, and report that
+      threshold's performance on held-out test (never used for tuning):
+
+      | | precision | recall | F1 |
+      |---|---|---|---|
+      | fixed-VAD baseline, best threshold (test) | 0.546 | 0.821 | **0.656** |
+      | learned model, argmax (test) | 0.903 | 0.405 | 0.559 |
+      | learned model, dev-tuned threshold=0.20 (test) | 0.624 | 0.940 | **0.750** |
+
+      Reproduce: `python training/tune_shift_threshold.py`
+
+      **This beats the fixed-VAD baseline** (0.750 vs. 0.656, +14%
+      relative) - legitimately, with the threshold chosen on dev and only
+      ever evaluated once on test. It confirms the original diagnosis
+      exactly: the model already had the right information and the right
+      architecture to beat fixed-VAD; what was actually broken was reading
+      predictions off argmax instead of a properly calibrated decision
+      threshold. This is the pause-aware (reactive) comparison, not the
+      zero-latency one - see the caveats above about what that distinction
+      means for actual deployment latency. Next: apply the same
+      threshold-tuning fix to the zero-latency variant, where the same
+      calibration issue likely also costs real performance.
+
+   Next directions worth trying: threshold-tune the zero-latency variant
+   the same way, a longer audio context window, and attention-based fusion
    instead of concatenation.
 2. Audio-only vs. text-only vs. audio+text fusion
 3. English vs. Hindi vs. Hinglish
