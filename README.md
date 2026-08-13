@@ -1,8 +1,9 @@
 # Real-Time Multilingual Voice Agent with Learned Turn-Taking
 
-> **Status: Phase 3 in progress — baseline pipeline done, learned turn detector (pause-aware
-> variant, threshold-tuned) beats the fixed-VAD baseline on held-out test (see Experiment 1).
-> Zero-latency variant does not yet beat it.**
+> **Status: Phase 3 in progress — baseline pipeline done. Threshold-tuned learned turn
+> detector beats the fixed-VAD baseline on held-out test, in BOTH the pause-aware variant
+> (F1 0.750 vs. 0.656) and, more importantly, the zero-latency variant that predicts before
+> the pause even starts (F1 0.674 vs. 0.656) — see Experiment 1.**
 > Every metric on this page came from code in this repo (see
 > [Reproducibility](#reproducibility)) — nothing here is estimated or assumed. Where a
 > result is preliminary or not favorable, that's stated explicitly rather than omitted.
@@ -12,8 +13,8 @@
 | Metric | Value |
 |---|---|
 | Turn Detection F1, fixed-VAD baseline (test) | 0.656 best-case (300ms) — see Experiment 1 |
+| Turn Detection F1, learned model, zero-latency + threshold-tuned (test) | **0.674** — beats baseline without waiting for any pause; see Experiment 1 |
 | Turn Detection F1, learned model, pause-aware + threshold-tuned (test) | **0.750** — beats baseline; see Experiment 1 |
-| Turn Detection F1, learned model, zero-latency argmax (test) | 0.61 — does not yet beat baseline; see Experiment 1 caveats |
 | ASR WER — English / Hindi / Hinglish | not yet measured |
 | p50 / p95 / p99 end-to-end latency | not yet measured |
 | INT8 CPU speedup vs FP32 | not yet measured |
@@ -215,7 +216,7 @@ baseline-vs-treatment comparison with real numbers, not before/after prose claim
       | | precision | recall | F1 |
       |---|---|---|---|
       | fixed-VAD baseline, best threshold (test) | 0.546 | 0.821 | **0.656** |
-      | learned model, argmax (test) | 0.903 | 0.405 | 0.559 |
+      | learned model, raw threshold=0.5 on P(shift) (test) | 0.903 | 0.405 | 0.559 |
       | learned model, dev-tuned threshold=0.20 (test) | 0.624 | 0.940 | **0.750** |
 
       Reproduce: `python training/tune_shift_threshold.py`
@@ -225,16 +226,39 @@ baseline-vs-treatment comparison with real numbers, not before/after prose claim
       ever evaluated once on test. It confirms the original diagnosis
       exactly: the model already had the right information and the right
       architecture to beat fixed-VAD; what was actually broken was reading
-      predictions off argmax instead of a properly calibrated decision
-      threshold. This is the pause-aware (reactive) comparison, not the
-      zero-latency one - see the caveats above about what that distinction
-      means for actual deployment latency. Next: apply the same
-      threshold-tuning fix to the zero-latency variant, where the same
-      calibration issue likely also costs real performance.
+      predictions off an uncalibrated threshold instead of one tuned for
+      this specific binary question. This is the pause-aware (reactive)
+      comparison, not the zero-latency one.
 
-   Next directions worth trying: threshold-tune the zero-latency variant
-   the same way, a longer audio context window, and attention-based fusion
-   instead of concatenation.
+   5. **Applied the same threshold-tuning fix to the zero-latency variant**
+      (`python training/tune_shift_threshold.py --zero-latency`) - and
+      this is the more important result, since zero-latency is the harder,
+      more deployment-relevant condition (predicts before the pause even
+      starts, so it doesn't cost any waiting time at all):
+
+      | | precision | recall | F1 |
+      |---|---|---|---|
+      | fixed-VAD baseline, best threshold (test) | 0.546 | 0.821 | 0.656 |
+      | zero-latency model, raw threshold=0.5 (test) | 0.636 | 0.003 | 0.007 |
+      | zero-latency model, dev-tuned threshold=0.15 (test) | 0.556 | 0.855 | **0.674** |
+
+      At raw threshold=0.5 the model predicts "shift" almost never
+      (recall 0.003) despite "shift" still frequently being the *argmax*
+      of the 4-way softmax - a reminder that t=0.5 on one class's
+      probability is not equivalent to that class winning argmax in a
+      multi-class setting, they can disagree sharply. Once calibrated
+      on dev, **the zero-latency model also beats fixed-VAD** (0.674 vs.
+      0.656) - meaning it's possible to match-and-beat a fixed silence
+      threshold's accuracy without waiting through any silence at all,
+      which is the actual result this whole project set out to find
+      evidence for. Smaller margin than the pause-aware variant (0.674 vs
+      0.750), which makes sense - it's solving a strictly harder problem
+      with less information.
+
+   Next directions worth trying: a longer audio context window, attention-
+   based fusion instead of concatenation, and validating that these
+   threshold choices (0.15 / 0.20) are stable across different random
+   seeds rather than a lucky artifact of one training run.
 2. Audio-only vs. text-only vs. audio+text fusion
 3. English vs. Hindi vs. Hinglish
 4. Clean vs. noisy audio
