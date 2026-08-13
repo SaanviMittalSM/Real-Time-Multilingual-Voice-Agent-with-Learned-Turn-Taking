@@ -27,13 +27,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import config  # noqa: E402
 from inference.asr import ASR  # noqa: E402
 
-NORMALIZE = jiwer.Compose([
+# WER needs word-tokenized input; CER needs normalized strings (character-level comparison
+# on a list-of-words would compare word boundaries as if they were characters, which is wrong).
+# Both share the same text normalization (lowercase, strip punctuation) - only the final
+# reduction step differs. Missing this for CER previously produced nonsense: English WER=0.024
+# but CER=0.842, purely from comparing ALL-CAPS unpunctuated LibriSpeech references against
+# normal-case punctuated Whisper output with no normalization at all.
+_BASE_NORMALIZE = [
     jiwer.ToLowerCase(),
     jiwer.RemovePunctuation(),
     jiwer.RemoveMultipleSpaces(),
     jiwer.Strip(),
-    jiwer.ReduceToListOfListOfWords(),
-])
+]
+WER_NORMALIZE = jiwer.Compose(_BASE_NORMALIZE + [jiwer.ReduceToListOfListOfWords()])
+CER_NORMALIZE = jiwer.Compose(_BASE_NORMALIZE)
 
 
 def load_english_samples(max_samples=None):
@@ -97,8 +104,8 @@ def evaluate_language(name, samples, asr, whisper_language):
         references.append(s["reference"])
         hypotheses.append(result["text"])
 
-    wer = jiwer.wer(references, hypotheses, reference_transform=NORMALIZE, hypothesis_transform=NORMALIZE)
-    cer = jiwer.cer(references, hypotheses)
+    wer = jiwer.wer(references, hypotheses, reference_transform=WER_NORMALIZE, hypothesis_transform=WER_NORMALIZE)
+    cer = jiwer.cer(references, hypotheses, reference_transform=CER_NORMALIZE, hypothesis_transform=CER_NORMALIZE)
     return {"language": name, "n_samples": len(samples), "wer": wer, "cer": cer}
 
 
