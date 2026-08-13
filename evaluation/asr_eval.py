@@ -40,7 +40,7 @@ _BASE_NORMALIZE = [
     jiwer.Strip(),
 ]
 WER_NORMALIZE = jiwer.Compose(_BASE_NORMALIZE + [jiwer.ReduceToListOfListOfWords()])
-CER_NORMALIZE = jiwer.Compose(_BASE_NORMALIZE)
+CER_NORMALIZE = jiwer.Compose(_BASE_NORMALIZE + [jiwer.ReduceToListOfListOfChars()])
 
 
 def load_english_samples(max_samples=None):
