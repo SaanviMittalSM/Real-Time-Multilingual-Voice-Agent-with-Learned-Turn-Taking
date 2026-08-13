@@ -118,28 +118,37 @@ if __name__ == "__main__":
     parser.add_argument("--max-samples", type=int, default=100,
                          help="Cap per language for a tractable first pass - not silently, this is logged.")
     parser.add_argument("--model-size", default="small")
+    parser.add_argument("--languages", nargs="+", choices=["english", "hindi", "hinglish"],
+                         default=["english", "hindi", "hinglish"],
+                         help="Run only a subset - useful for retrying one language without "
+                              "redoing the others (results merge into the existing output file).")
     args = parser.parse_args()
 
     print(f"Loading faster-whisper ({args.model_size})...")
     asr = ASR(model_size=args.model_size)
 
-    results = []
-    for name, iter_fn, whisper_lang in [
-        ("english", iter_english_samples, "en"),
-        ("hindi", iter_hindi_samples, "hi"),
-        ("hinglish", iter_hinglish_samples, "hi"),
-    ]:
+    out_path = config.DATA_DIR / "manifests" / "asr_multilingual_eval.json"
+    existing = {r["language"]: r for r in json.load(open(out_path))} if out_path.exists() else {}
+
+    all_loaders = {
+        "english": (iter_english_samples, "en"),
+        "hindi": (iter_hindi_samples, "hi"),
+        "hinglish": (iter_hinglish_samples, "hi"),
+    }
+    for name in args.languages:
+        iter_fn, whisper_lang = all_loaders[name]
         print(f"\n[{name}] streaming up to {args.max_samples} samples (capped - see --max-samples)...")
         result = evaluate_language(name, iter_fn(max_samples=args.max_samples), asr, whisper_lang)
-        results.append(result)
+        existing[name] = result
         print(f"[{name}] WER={result['wer']:.3f}  CER={result['cer']:.3f}  n={result['n_samples']}")
 
     print("\n=== Summary (never averaged across languages) ===")
-    for r in results:
-        print(f"{r['language']:>10}: WER={r['wer']:.3f}  CER={r['cer']:.3f}  (n={r['n_samples']})")
+    for name in ["english", "hindi", "hinglish"]:
+        if name in existing:
+            r = existing[name]
+            print(f"{r['language']:>10}: WER={r['wer']:.3f}  CER={r['cer']:.3f}  (n={r['n_samples']})")
 
-    out_path = config.DATA_DIR / "manifests" / "asr_multilingual_eval.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
-        json.dump(results, f, indent=2)
+        json.dump(list(existing.values()), f, indent=2)
     print(f"\nWrote {out_path}")
