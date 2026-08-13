@@ -1,9 +1,10 @@
 # Real-Time Multilingual Voice Agent with Learned Turn-Taking
 
-> **Status: Phase 3 in progress — baseline pipeline done. Threshold-tuned learned turn
+> **Status: Phase 3 done, Phase 4 (multilingual ASR) done. Threshold-tuned learned turn
 > detector beats the fixed-VAD baseline on held-out test, in BOTH the pause-aware variant
 > (F1 0.750 vs. 0.656) and, more importantly, the zero-latency variant that predicts before
-> the pause even starts (F1 0.674 vs. 0.656) — see Experiment 1.**
+> the pause even starts (F1 0.674 vs. 0.656) — see Experiment 1. ASR WER benchmarked
+> separately across English/Hindi/Hinglish — see Experiment 3.**
 > Every metric on this page came from code in this repo (see
 > [Reproducibility](#reproducibility)) — nothing here is estimated or assumed. Where a
 > result is preliminary or not favorable, that's stated explicitly rather than omitted.
@@ -15,7 +16,7 @@
 | Turn Detection F1, fixed-VAD baseline (test) | 0.656 best-case (300ms) — see Experiment 1 |
 | Turn Detection F1, learned model, zero-latency + threshold-tuned (test) | **0.674** — beats baseline without waiting for any pause; see Experiment 1 |
 | Turn Detection F1, learned model, pause-aware + threshold-tuned (test) | **0.750** — beats baseline; see Experiment 1 |
-| ASR WER — English / Hindi / Hinglish | not yet measured |
+| ASR WER — English / Hindi / Hinglish | 0.026 / 0.556 / 0.804 (whisper-small, n=100 each) — see Experiment 3 |
 | p50 / p95 / p99 end-to-end latency | not yet measured |
 | INT8 CPU speedup vs FP32 | not yet measured |
 | Task completion rate (agent + tools) | not yet measured |
@@ -261,6 +262,32 @@ baseline-vs-treatment comparison with real numbers, not before/after prose claim
    seeds rather than a lucky artifact of one training run.
 2. Audio-only vs. text-only vs. audio+text fusion
 3. English vs. Hindi vs. Hinglish
+
+   **Result (whisper-small, no fine-tuning, n=100 held-out samples per
+   language):**
+
+   | language | dataset | WER | CER |
+   |---|---|---|---|
+   | English | LibriSpeech test-clean | 0.026 | 0.009 |
+   | Hindi | FLEURS hi_in test | 0.556 | 0.229 |
+   | Hinglish (code-switched) | MUCS 2021 Hindi-English test | 0.804 | 0.673 |
+
+   Reproduce: `python evaluation/asr_eval.py --max-samples 100`
+
+   Reported separately, never averaged into one "multilingual" number -
+   this is the project's explicit rule, since a single blended WER would
+   hide exactly the gap that matters. The gap is large and expected:
+   whisper-small is a general-purpose multilingual model, not fine-tuned
+   for Hindi or (especially) code-switching, and Hindi/Hinglish get
+   dramatically less pretraining data than English in Whisper's training
+   mix. Hinglish is hardest by a wide margin - consistent with
+   code-switching being a known hard case for ASR models trained
+   predominantly on monolingual data, and with whisper-small transcribing
+   in a single target language ("hi") rather than natively handling
+   intra-utterance language switching. This gap is itself the motivation
+   for Experiment 5 (pretrained vs. fine-tuned ASR) - fine-tuning on
+   in-domain code-switched data is the obvious next lever to pull.
+
 4. Clean vs. noisy audio
 5. Pretrained vs. fine-tuned ASR
 6. Dense vs. BM25 vs. hybrid retrieval
